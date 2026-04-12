@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -19,14 +20,15 @@ public class KioskGameManager : MonoBehaviour
     public static PlayerSession CurrentSession { get; private set; } = new PlayerSession();
 
     // ── State ────────────────────────────────────────────────────────────
-    public enum KioskState { Registration, MiniGame, QRCode }
-    public static KioskState State { get; private set; } = KioskState.Registration;
+    public enum KioskState { Registration, MiniGame, levelUP, QRCode }
+    [SerializeField] public KioskState State = KioskState.Registration;
 
     // ── Canvases / screen roots (same scene) ───────────────────────────────
     [Header("Screen roots (one scene, toggle active)")]
     [SerializeField] private GameObject registrationCanvas;
     [SerializeField] private GameObject miniGameCanvas;
     [SerializeField] private GameObject qrCodeCanvas;
+    [SerializeField] private GameObject levelUPCanvas;
 
     // ── Idle watchdog ────────────────────────────────────────────────────
     private float _idleTimer;
@@ -51,16 +53,10 @@ public class KioskGameManager : MonoBehaviour
         ApplyCanvasVisibility();
     }
 
-    private void Update()
+   IEnumerator LoadQRScreen()
     {
-        if (!_idleWatchdogActive) return;
-
-        if (Input.anyKey || Input.touchCount > 0)
-            _idleTimer = 0f;
-
-        _idleTimer += Time.deltaTime;
-        if (_idleTimer >= KioskConfig.IdleTimeoutSeconds)
-            GoToRegistration();
+        yield return new WaitForSeconds(3);
+        GoToQRCode();
     }
 
     // ── State transitions (call from anywhere) ────────────────────────────
@@ -68,15 +64,19 @@ public class KioskGameManager : MonoBehaviour
     /// <summary>
     /// Shows the registration canvas.
     /// </summary>
-    public static void GoToRegistration()
+    public void GoToRegistration()
     {
         SetState(KioskState.Registration, idle: true);
     }
-
+    public void GoToLevelUP()
+    {
+        SetState(KioskState.levelUP, idle: true);
+        StartCoroutine(LoadQRScreen());
+    }
     /// <summary>
     /// Call after registration API succeeds. Shows the order-hunt canvas (<see cref="KioskState.MiniGame"/>).
     /// </summary>
-    public static void GoToMiniGame()
+    public void GoToMiniGame()
     {
         SetState(KioskState.MiniGame, idle: false);
     }
@@ -84,14 +84,14 @@ public class KioskGameManager : MonoBehaviour
     /// <summary>
     /// Shows the QR canvas. Session score/duration should already be set (e.g. by <see cref="OrderHuntManager"/>).
     /// </summary>
-    public static void GoToQRCode()
+    public void GoToQRCode()
     {
         SetState(KioskState.QRCode, idle: false);
     }
 
     // ── Internal ──────────────────────────────────────────────────────────
 
-    private static void SetState(KioskState next, bool idle)
+    private void SetState(KioskState next, bool idle)
     {
         State = next;
         if (Instance == null) return;
@@ -106,6 +106,7 @@ public class KioskGameManager : MonoBehaviour
         SetActiveIfAssigned(registrationCanvas, State == KioskState.Registration);
         SetActiveIfAssigned(miniGameCanvas, State == KioskState.MiniGame);
         SetActiveIfAssigned(qrCodeCanvas, State == KioskState.QRCode);
+        SetActiveIfAssigned(levelUPCanvas, State == KioskState.levelUP);
     }
     public void Reload()
     {

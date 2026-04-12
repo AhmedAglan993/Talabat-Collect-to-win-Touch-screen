@@ -1,21 +1,32 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 /// <summary>
-/// Order-hunt mini-game: builds a random order from the shuffle spawner's sprite pool,
-/// handles collect / wrong feedback, writes session score and duration, then opens the QR canvas.
+/// Order-hunt: each round picks <b>one of two</b> predefined sprite orders (not a fully random pick from the pool).
+/// Order row length = number of sprites in the chosen scenario. Drops on the collection box fill matching slots (any order among slots).
 /// </summary>
 public class OrderHuntManager : MonoBehaviour
 {
     [Header("Dependencies")]
     [SerializeField] private ShuffleItemSpawner shuffleSpawner;
 
+    [Header("Drop zone")]
+    [Tooltip("Corner box Image — player must drop matching items here to collect them.")]
+    [SerializeField] private RectTransform collectionBox;
+
+    [Header("Drag — forbidden zones")]
+    [Tooltip("Items cannot be dragged into these rects (e.g. UI chrome).")]
+    [SerializeField] private List<RectTransform> restrictedDragAreas = new List<RectTransform>();
+
+    [Header("Order scenarios (one chosen at random each round)")]
+    [Tooltip("Add 2 (or more) entries; each has optional entryIds + orderSprites. One scenario is picked per round.")]
+    [SerializeField] private List<SpriteOrderDefinition> orderScenarios = new List<SpriteOrderDefinition>();
     [Header("Order UI")]
     [SerializeField] private RectTransform orderContainer;
     [SerializeField] private Image orderIconPrefab;
-    [SerializeField] private int orderCount = 8;
 
     [Header("Feedback")]
     [SerializeField] private UIShake uiShake;
@@ -31,11 +42,31 @@ public class OrderHuntManager : MonoBehaviour
     [SerializeField] private float delayBeforeQrSeconds = 0.35f;
     [SerializeField] private int scorePerCollectedItem = 10;
 
-    private readonly HashSet<Sprite> _remaining = new HashSet<Sprite>();
-    private readonly Dictionary<Sprite, Image> _orderIconBySprite = new Dictionary<Sprite, Image>();
+    /// <summary>
+    /// Optional ids + sprites for one fixed order. Gameplay uses <see cref="orderSprites"/>; ids are optional metadata.
+    /// </summary>
+    [System.Serializable]
+    public class SpriteOrderDefinition
+    {
+        [Tooltip("Optional parallel ids (same count as Sprites if used).")]
+        public string orderType;
+
+        [Tooltip("Sprites required for this order, in display order (length = number of order slots).")]
+        public List<Sprite> orderSprites = new List<Sprite>();
+    }
+
+    private readonly List<Sprite> _currentOrderSprites = new List<Sprite>();
+    private bool[] _slotCollected;
+    private readonly List<Image> _orderSlotIcons = new List<Image>();
+
     private int _initialOrderCount;
     private bool _completionStarted;
     private float _roundStartTime;
+
+    /// <summary>
+    /// Regions collectibles may not overlap while dragging (same list passed at spawn).
+    /// </summary>
+    public IReadOnlyList<RectTransform> RestrictedDragAreas => restrictedDragAreas;
 
     private void Awake()
     {
@@ -49,17 +80,18 @@ public class OrderHuntManager : MonoBehaviour
     }
 
     /// <summary>
-    /// Builds a new shuffled play area (optional) and generates a new order list.
+    /// Picks a random entry from <see cref="orderScenarios"/> that has sprites, builds the order row, then spawns the play area.
     /// </summary>
     public void BuildNewRound()
     {
         ClearOrderUI();
-        _remaining.Clear();
-        _orderIconBySprite.Clear();
+        _orderSlotIcons.Clear();
+        _currentOrderSprites.Clear();
+        _slotCollected = null;
         _completionStarted = false;
         _roundStartTime = Time.realtimeSinceStartup;
 
-        if (shuffleSpawner == null || orderContainer == null || orderIconPrefab == null)
+        if (shuffleSpawner == null || orderContainer == null || orderIconPrefab == null || collectionBox == null)
         {
             enabled = false;
             return;
@@ -72,51 +104,149 @@ public class OrderHuntManager : MonoBehaviour
             return;
         }
 
-        int count = Mathf.Clamp(orderCount, 1, pool.Count);
-        Shuffle(pool);
-
-        for (int i = 0; i < count; i++)
+        SpriteOrderDefinition chosen = PickRandomScenario();
+        if (chosen == null || chosen.orderSprites == null || chosen.orderSprites.Count == 0)
         {
-            Sprite s = pool[i];
-            if (s == null) continue;
-            if (_remaining.Contains(s)) continue;
+            Debug.LogWarning("[OrderHuntManager] No valid order scenario: add at least one entry to orderScenarios with orderSprites.");
+            enabled = false;
+            return;
+        }
 
-            _remaining.Add(s);
+
+
+        foreach (Sprite s in chosen.orderSprites)
+        {
+            if (s == null) continue;
+            _currentOrderSprites.Add(s);
+        }
+
+        if (_currentOrderSprites.Count == 0)
+        {
+            enabled = false;
+            return;
+        }
+
+        _initialOrderCount = _currentOrderSprites.Count;
+        _slotCollected = new bool[_currentOrderSprites.Count];
+
+        for (int i = 0; i < _currentOrderSprites.Count; i++)
+        {
+            Sprite s = _currentOrderSprites[i];
             Image icon = Instantiate(orderIconPrefab, orderContainer);
             icon.sprite = s;
             icon.enabled = true;
-            _orderIconBySprite[s] = icon;
+
+            _orderSlotIcons.Add(icon);
         }
 
-        _initialOrderCount = _remaining.Count;
-
-        // Ensure the play area items are present and clickable for this round.
         shuffleSpawner.SpawnNow();
         shuffleSpawner.AttachCollectibles(this);
     }
 
     /// <summary>
-    /// Called by CollectibleItem when player taps an item in the play area.
+    /// Returns a random scenario from <see cref="orderScenarios"/> that has at least one non-null sprite.
     /// </summary>
-    public void TryCollect(CollectibleItem item)
+    private SpriteOrderDefinition PickRandomScenario()
     {
-        if (item == null) return;
-        Sprite sprite = item.Sprite;
-        if (sprite == null) return;
+        if (orderScenarios == null || orderScenarios.Count == 0)
+            return null;
 
-        if (_remaining.Contains(sprite))
+        List<SpriteOrderDefinition> valid = new List<SpriteOrderDefinition>();
+        for (int i = 0; i < orderScenarios.Count; i++)
         {
-            _remaining.Remove(sprite);
+            SpriteOrderDefinition sc = orderScenarios[i];
+            if (sc == null || sc.orderSprites == null) continue;
+            if (CountNonNullSprites(sc.orderSprites) > 0)
+                valid.Add(sc);
+        }
+
+        if (valid.Count == 0)
+            return null;
+
+        return valid[Random.Range(0, valid.Count)];
+    }
+
+    private static int CountNonNullSprites(List<Sprite> list)
+    {
+        int n = 0;
+        if (list == null) return 0;
+        foreach (Sprite s in list)
+        {
+            if (s != null) n++;
+        }
+
+        return n;
+    }
+
+    /// <summary>
+    /// Finds the first uncollected slot whose sprite matches the dropped item (supports duplicate sprites in the order).
+    /// </summary>
+    private bool TryConsumeMatchingSlot(Sprite sprite, out int slotIndex)
+    {
+        slotIndex = -1;
+        if (sprite == null || _slotCollected == null || _currentOrderSprites == null) return false;
+
+        for (int i = 0; i < _currentOrderSprites.Count; i++)
+        {
+            if (_slotCollected[i]) continue;
+            if (_currentOrderSprites[i] == sprite)
+            {
+                slotIndex = i;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private int CountSlotsRemaining()
+    {
+        if (_slotCollected == null) return 0;
+        int c = 0;
+        for (int i = 0; i < _slotCollected.Length; i++)
+        {
+            if (!_slotCollected[i]) c++;
+        }
+
+        return c;
+    }
+
+    /// <summary>
+    /// Called when a draggable item is released after a drag. Handles drop-on-box vs snap-back.
+    /// </summary>
+    public void HandleItemDropFinished(CollectibleItem item, PointerEventData eventData)
+    {
+        if (item == null || collectionBox == null) return;
+
+        Camera cam = eventData.pressEventCamera;
+        if (!RectTransformUtility.RectangleContainsScreenPoint(collectionBox, eventData.position, cam))
+        {
+            // Not dropped on the collection box — leave the item where it was released (no snap).
+            return;
+        }
+
+        Sprite sprite = item.Sprite;
+        if (sprite == null)
+        {
+            item.SnapBackToStart();
+            return;
+        }
+
+        if (TryConsumeMatchingSlot(sprite, out int slotIndex))
+        {
+            _slotCollected[slotIndex] = true;
             PlayOneShot(correctClip);
 
-            if (_orderIconBySprite.TryGetValue(sprite, out Image icon) && icon != null)
+            if (slotIndex >= 0 && slotIndex < _orderSlotIcons.Count)
             {
-                StartCoroutine(AnimateOrderIconCollected(icon));
+                Image icon = _orderSlotIcons[slotIndex];
+                if (icon != null)
+                    StartCoroutine(AnimateOrderIconCollected(icon));
             }
 
-            item.PlayCollectAndDestroy();
+            item.PlayDropIntoBoxThenDestroy(collectionBox);
 
-            if (_remaining.Count == 0 && !_completionStarted)
+            if (CountSlotsRemaining() == 0 && !_completionStarted)
             {
                 _completionStarted = true;
                 StartCoroutine(CompleteOrderAndGoToQr());
@@ -126,6 +256,7 @@ public class OrderHuntManager : MonoBehaviour
         {
             PlayOneShot(wrongClip);
             if (uiShake != null) uiShake.Shake();
+            item.SnapBackToStart();
         }
     }
 
@@ -144,7 +275,11 @@ public class OrderHuntManager : MonoBehaviour
         session.miniGameScore = totalScore;
         session.miniGameDuration = duration;
 
-        KioskGameManager.GoToQRCode();
+        if (KioskGameManager.Instance != null)
+        {
+            KioskGameManager.Instance.GoToLevelUP();
+
+        }
     }
 
     private IEnumerator AnimateOrderIconCollected(Image icon)
@@ -189,14 +324,4 @@ public class OrderHuntManager : MonoBehaviour
             Destroy(orderContainer.GetChild(i).gameObject);
         }
     }
-
-    private static void Shuffle<T>(IList<T> list)
-    {
-        for (int i = list.Count - 1; i > 0; i--)
-        {
-            int j = Random.Range(0, i + 1);
-            (list[i], list[j]) = (list[j], list[i]);
-        }
-    }
 }
-

@@ -13,6 +13,7 @@ GameObject:
   - component: {fileID: 1831781589511398297}
   - component: {fileID: -580961188638651813}
   - component: {fileID: 1862668979987898688}
+  - component: {fileID: 9103563468585526745}
   m_Layer: 5
   m_Name: Item
   m_TagString: Untagged
@@ -89,7 +90,11 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e5a5e803f0742554bb34edb1a9169a54, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  collectPopDurationSeconds: 0.15
+  dragVisualScale: 1.08
+  playAreaEdgePadding: 4
+  dropTravelSeconds: 0.32
+  dropShrinkSeconds: 0.15
+  snapBackSeconds: 0.22
 --- !u!114 &1862668979987898688
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -146,3 +151,27 @@ MonoBehaviour:
           m_StringArgument: 
           m_BoolArgument: 0
         m_CallState: 2
+--- !u!114 &9103563468585526745
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 476228428822453838}
+  m_Enabled: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bf86c098f47b5f541bac178f6214b8c6, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  onComplete:
+    m_PersistentCalls:
+      m_Calls: []
+  animations:
+  - preset: 9
+    triggerEvent: 0
+    duration: 0.5
+    delay: 0
+    ease: 3
+    loop: 0
+    loopType: 0
+    loopCount: 0

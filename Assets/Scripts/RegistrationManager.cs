@@ -64,7 +64,7 @@ public class RegistrationManager : MonoBehaviour
                  s.sessionToken = data.playToken ?? string.Empty;
                  s.gameLink = data.gameLink ?? string.Empty;
                  s.qrCodeDataUrl = data.qrCodeDataUrl ?? string.Empty;
-                 KioskGameManager.GoToMiniGame();
+                 KioskGameManager.Instance.GoToMiniGame();
 
              },
              onError: err =>

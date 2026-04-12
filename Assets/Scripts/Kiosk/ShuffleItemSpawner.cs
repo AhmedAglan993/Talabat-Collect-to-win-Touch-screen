@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
@@ -33,7 +34,15 @@ public class ShuffleItemSpawner : MonoBehaviour
     [SerializeField] private bool forcePrefabSize = false;
     [SerializeField] private Vector2 forcedSizePixels = new Vector2(120f, 120f);
 
+    [Header("Spawn animation")]
+    [SerializeField] private bool animateSpawn = true;
+    [SerializeField] private float spawnAnimDuration = 0.38f;
+    [SerializeField] private float spawnStaggerSeconds = 0.04f;
+    [Tooltip("If assigned, scales by this curve (time 0–1). Otherwise uses an ease-out overshoot.")]
+    [SerializeField] private AnimationCurve spawnScaleCurve;
+
     private readonly List<Image> _spawned = new List<Image>(64);
+    private readonly List<Vector3> _spawnTargetScales = new List<Vector3>();
 
     /// <summary>
     /// Returns a copy of the available sprite pool used for shuffling.
@@ -44,28 +53,22 @@ public class ShuffleItemSpawner : MonoBehaviour
     }
 
     /// <summary>
-    /// Ensures each spawned item has a CollectibleItem component that forwards taps to the manager.
-    /// Call after SpawnNow().
+    /// Ensures each spawned item has a <see cref="CollectibleItem"/> wired to the manager (restricted zones on release only).
+    /// Call after <see cref="SpawnNow"/>.
     /// </summary>
     public void AttachCollectibles(OrderHuntManager manager)
     {
         if (manager == null) return;
         for (int i = 0; i < _spawned.Count; i++)
         {
-
             Image img = _spawned[i];
             if (img == null) continue;
 
-            img.raycastTarget = true;
-
             CollectibleItem c = img.GetComponent<CollectibleItem>();
             if (c == null)
-            {
                 c = img.gameObject.AddComponent<CollectibleItem>();
-            print("Manager");
 
-            }
-            c.Init(manager);
+            c.Init(manager, manager.RestrictedDragAreas);
         }
     }
 
@@ -126,8 +129,89 @@ public class ShuffleItemSpawner : MonoBehaviour
             {
                 img.SetNativeSize();
             }
+
+            Vector3 targetScale = img.rectTransform.localScale;
+
+            if (animateSpawn)
+            {
+                img.raycastTarget = false;
+                CanvasGroup cgInit = img.GetComponent<CanvasGroup>();
+                if (cgInit == null) cgInit = img.gameObject.AddComponent<CanvasGroup>();
+                cgInit.alpha = 0f;
+                cgInit.blocksRaycasts = false;
+                img.rectTransform.localScale = Vector3.zero;
+            }
+            else
+            {
+                img.raycastTarget = true;
+            }
+
             _spawned.Add(img);
+            _spawnTargetScales.Add(targetScale);
         }
+
+        if (animateSpawn)
+        {
+            for (int i = 0; i < _spawned.Count; i++)
+            {
+                Image img = _spawned[i];
+                if (img == null) continue;
+                float delay = i * Mathf.Max(0f, spawnStaggerSeconds);
+                Vector3 endScale = i < _spawnTargetScales.Count ? _spawnTargetScales[i] : Vector3.one;
+                if (endScale.sqrMagnitude < 0.0001f) endScale = Vector3.one;
+                StartCoroutine(AnimateSpawnPop(img, delay, endScale));
+            }
+        }
+    }
+
+    private IEnumerator AnimateSpawnPop(Image img, float delay, Vector3 endScale)
+    {
+        if (delay > 0f)
+            yield return new WaitForSecondsRealtime(delay);
+
+        if (img == null) yield break;
+
+        RectTransform rt = img.rectTransform;
+
+        CanvasGroup cg = img.GetComponent<CanvasGroup>();
+        if (cg == null) cg = img.gameObject.AddComponent<CanvasGroup>();
+
+        rt.localScale = Vector3.zero;
+        cg.alpha = 0f;
+
+        float dur = Mathf.Max(0.05f, spawnAnimDuration);
+        float t = 0f;
+        while (t < dur)
+        {
+            t += Time.unscaledDeltaTime;
+            float k = Mathf.Clamp01(t / dur);
+            float easedScale = EvaluateSpawnScale(k);
+            float easedAlpha = Mathf.SmoothStep(0f, 1f, k);
+
+            rt.localScale = Vector3.LerpUnclamped(Vector3.zero, endScale, easedScale);
+            cg.alpha = easedAlpha;
+            yield return null;
+        }
+
+        rt.localScale = endScale;
+        cg.alpha = 1f;
+        cg.blocksRaycasts = true;
+        img.raycastTarget = true;
+    }
+
+    private float EvaluateSpawnScale(float t)
+    {
+        if (spawnScaleCurve != null && spawnScaleCurve.length > 0)
+            return Mathf.Clamp01(spawnScaleCurve.Evaluate(t));
+
+        return EaseOutBack(t);
+    }
+
+    private static float EaseOutBack(float x)
+    {
+        const float c1 = 1.70158f;
+        const float c3 = c1 + 1f;
+        return 1f + c3 * Mathf.Pow(x - 1f, 3f) + c1 * Mathf.Pow(x - 1f, 2f);
     }
 
     /// <summary>
@@ -164,6 +248,7 @@ public class ShuffleItemSpawner : MonoBehaviour
             }
         }
         _spawned.Clear();
+        _spawnTargetScales.Clear();
     }
 
     [ContextMenu("Spawn Now")]
