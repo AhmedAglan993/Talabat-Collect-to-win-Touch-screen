@@ -30,7 +30,8 @@ public class RegistrationManager : MonoBehaviour
         submitButton.onClick.AddListener(OnSubmitClicked);
 
         // Auto-open keyboard on kiosk touch screen
-        nameInputField.ActivateInputField();
+     //   nameInputField.ActivateInputField();
+       // nameInputField.ReleaseSelection();
     }
 
     // ── Submit ─────────────────────────────────────────────────────────────

@@ -50,6 +50,13 @@ public class OnScreenKeyboard : MonoBehaviour
         RefreshRegisteredInputs();
     }
 
+    private void OnEnable()
+    {
+        // When canvases are toggled, input may be pre-selected before our listeners run.
+        // Delay one frame so EventSystem selection and TMP focus are settled, then sync keyboard state.
+        StartCoroutine(SyncToCurrentSelectionNextFrame());
+    }
+
     private void OnDestroy()
     {
         ClearInputSubscriptions();
@@ -77,6 +84,42 @@ public class OnScreenKeyboard : MonoBehaviour
                     SubscribeField(f);
             }
         }
+    }
+
+    private IEnumerator SyncToCurrentSelectionNextFrame()
+    {
+        yield return null;
+
+        if (!isActiveAndEnabled) yield break;
+
+        // Re-scan in case this keyboard was enabled after other canvases.
+        RefreshRegisteredInputs();
+
+        TMP_InputField focused = GetFocusedInputField();
+        if (focused != null)
+        {
+            OnFieldSelected(focused);
+        }
+    }
+
+    private TMP_InputField GetFocusedInputField()
+    {
+        // Prefer EventSystem selection.
+        if (EventSystem.current != null && EventSystem.current.currentSelectedGameObject != null)
+        {
+            var sel = EventSystem.current.currentSelectedGameObject;
+            var f = sel.GetComponent<TMP_InputField>() ?? sel.GetComponentInParent<TMP_InputField>();
+            if (f != null) return f;
+        }
+
+        // Fallback: any tracked field that reports focus.
+        for (int i = 0; i < _tracked.Count; i++)
+        {
+            var f = _tracked[i];
+            if (f != null && f.isFocused) return f;
+        }
+
+        return null;
     }
 
     private void WireKeyButtons()
